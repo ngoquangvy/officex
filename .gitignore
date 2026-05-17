@@ -1,0 +1,7 @@
+node_modules/
+*.log
+*.exe
+hybrid-office-opener/apps/desktop-client/dist/
+hybrid-office-opener/apps/desktop-client/rcedit.exe
+testextension.docx
+hybrid-office-opener/test.docx

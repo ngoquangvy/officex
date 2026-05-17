@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "OfficeX",
+  "version": "1.2",
+  "description": "Mở file Office bằng Google Docs/Sheets trực tiếp trên Chrome. Hỗ trợ tự động đồng bộ và tải lên Google Drive.",
+  "icons": {
+    "16": "src/assets/icon.png",
+    "48": "src/assets/icon.png",
+    "128": "src/assets/icon.png"
+  },
+  "permissions": [
+    "notifications",
+    "tabs",
+    "identity",
+    "storage"
+  ],
+  "host_permissions": [
+    "file:///*",
+    "https://www.googleapis.com/*"
+  ],
+  "oauth2": {
+    "client_id": "180551323980-rqcdig6hj4b097boari3momg9psmgtvb.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.file"
+    ]
+  },
+  "background": {
+    "service_worker": "src/background/index.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["file:///*"],
+      "js": ["src/content/viewer.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_icon": "src/assets/icon.png",
+    "default_title": "OfficeX"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/pages/trigger.html", "src/assets/icon.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "name": "officex",
+  "version": "1.2.0",
+  "description": "Desktop launcher for OfficeX - Open Office files with Google Docs/Sheets",
+  "main": "src/index.js",
+  "bin": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "build": "pkg src/index.js --targets node20-win-x64 --output dist/OfficeX.exe --public --compress GZip"
+  },
+  "pkg": {
+    "assets": [
+      "config.json",
+      "src/assets/**/*",
+      "rcedit.exe"
+    ]
+  },
+  "author": "OfficeX Team",
+  "license": "ISC"
+}
