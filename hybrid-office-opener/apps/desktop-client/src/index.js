@@ -25,7 +25,9 @@ async function main() {
     const filePath = args[0];
 
     if (!filePath) {
-        const exeName = process.pkg ? 'OfficeX.exe' : 'node index.js';
+        const exeName = process.pkg
+            ? (process.platform === 'win32' ? 'OfficeX.exe' : 'OfficeX')
+            : 'node index.js';
         console.log('╔══════════════════════════════════════════════════╗');
         console.log('║        🚀 OfficeX — Mở file Office               ║');
         console.log('╠══════════════════════════════════════════════════╣');

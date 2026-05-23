@@ -157,7 +157,7 @@ function findAvailableBrowsers() {
     const chrome = findChrome();
     if (chrome) found.push(chrome);
 
-    if (platform === 'win32') {
+    if (platform === 'win32' || platform === 'darwin') {
         const edge = findEdge();
         if (edge) found.push(edge);
     }
@@ -191,38 +191,52 @@ function findPreferredBrowser() {
     return null;
 }
 
+function getExtensionDir() {
+    if (process.pkg) {
+        const p = path.resolve(path.dirname(process.execPath), '..', '..', 'browser-extension');
+        if (fs.existsSync(path.join(p, 'manifest.json'))) return p;
+    }
+    const p = path.resolve(__dirname, '..', '..', 'browser-extension');
+    if (fs.existsSync(path.join(p, 'manifest.json'))) return p;
+    return null;
+}
+
 // ========== LAUNCH COMMANDS ==========
 
 function buildLaunchCommand(browserInfo, extensionId, filePath) {
-    const targetUrl = `chrome-extension://${extensionId}/src/pages/trigger.html?file=${encodeURIComponent(filePath)}`;
+    const normalizedPath = filePath.replace(/\\/g, '/');
+    const fileUrl = 'file://' + (normalizedPath.startsWith('/') ? '' : '/') + normalizedPath;
+    const triggerUrl = `chrome-extension://${extensionId}/src/pages/trigger.html?file=${encodeURIComponent(filePath)}`;
     const platform = process.platform;
 
     if (browserInfo.browser === 'chrome') {
         if (platform === 'darwin' && !fs.existsSync(browserInfo.path)) {
-            return `open -a "Google Chrome" "${targetUrl}"`;
+            return `open -a "Google Chrome" "${fileUrl}"`;
         }
-        return `"${browserInfo.path}" "${targetUrl}"`;
+        return `"${browserInfo.path}" "${fileUrl}"`;
     }
 
     if (browserInfo.browser === 'edge') {
         if (platform === 'darwin' && !fs.existsSync(browserInfo.path)) {
-            return `open -a "Microsoft Edge" "${targetUrl}"`;
+            return `open -a "Microsoft Edge" "${fileUrl}"`;
         }
-        return `"${browserInfo.path}" "${targetUrl}"`;
+        return `"${browserInfo.path}" "${fileUrl}"`;
     }
 
-    // Safari - cần extension URL riêng (safari-web-extension://),
-    // hiện tại dùng open để mở URL tạm thời
     if (browserInfo.browser === 'safari') {
-        return `open -a Safari "${targetUrl}"`;
+        return `open -a Safari "${fileUrl}"`;
     }
 
     return null;
 }
 
+function ensureBrowserRestarted(browserInfo) {
+    return Promise.resolve(true); // Vô hiệu hoá việc tắt Chrome
+}
+
 // ========== OPEN FILE (Main) ==========
 
-function openFile(extensionId, filePath, preferredBrowser) {
+async function openFile(extensionId, filePath, preferredBrowser) {
     let browserInfo;
 
     if (preferredBrowser) {
@@ -254,6 +268,8 @@ function openFile(extensionId, filePath, preferredBrowser) {
             'Safari chưa được hỗ trợ. Vui lòng cài Google Chrome để sử dụng OfficeX.'
         ));
     }
+
+    await ensureBrowserRestarted(browserInfo);
 
     const command = buildLaunchCommand(browserInfo, extensionId, filePath);
     if (!command) {

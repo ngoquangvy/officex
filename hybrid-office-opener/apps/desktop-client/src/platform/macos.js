@@ -46,7 +46,7 @@ function generateInfoPlist(launcherPath) {
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>${APP_NAME}</string>
+    <string>droplet</string>
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
@@ -61,6 +61,8 @@ function generateInfoPlist(launcherPath) {
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
+    <key>CFBundleIconFile</key>
+    <string>icon.icns</string>
     <key>CFBundleDocumentTypes</key>
     <array>
 ${documentTypesXml}
@@ -70,75 +72,166 @@ ${documentTypesXml}
 }
 
 /**
- * Tạo shell script thực thi bên trong .app bundle.
- * Script này sẽ được macOS gọi khi double-click file.
+ * Tạo AppleScript để xử lý sự kiện double-click file và gọi binary/script OfficeX.
  */
-function generateExecutableScript(launcherPath) {
-    return `#!/bin/bash
-# OfficeX Launcher — macOS App Bundle Executable
-# Tìm đường dẫn node
-NODE_BIN=$(which node 2>/dev/null)
-if [ -z "$NODE_BIN" ]; then
-    # Thử các đường dẫn phổ biến trên macOS
-    for p in /usr/local/bin/node /opt/homebrew/bin/node "$HOME/.nvm/versions/node/*/bin/node"; do
-        if [ -x "$p" ]; then
-            NODE_BIN="$p"
-            break
-        fi
-    done
-fi
+function generateAppleScript(launcherPath) {
+    let runCommand = '';
+    let runEmptyCommand = '';
+    
+    if (process.pkg) {
+        runCommand = `do shell script (quoted form of "${launcherPath}") & " " & (quoted form of posixPath)`;
+        runEmptyCommand = `do shell script (quoted form of "${launcherPath}")`;
+    } else {
+        runCommand = `
+        set nodeBin to ""
+        try
+            set nodeBin to do shell script "which node"
+        on error
+            try
+                set nodeBin to do shell script "for p in /usr/local/bin/node /opt/homebrew/bin/node \\"$HOME/.nvm/versions/node/*/bin/node\\"; do if [ -x \\"$p\\" ]; then echo \\"$p\\"; break; fi; done"
+            end try
+        end try
+        
+        if nodeBin is "" then
+            display dialog "OfficeX cần Node.js để chạy.\\nVui lòng cài đặt Node.js từ https://nodejs.org" with title "OfficeX" buttons {"OK"} default button "OK" with icon stop
+            return
+        end if
+        
+        do shell script (quoted form of nodeBin) & " " & (quoted form of "${launcherPath}") & " " & (quoted form of posixPath)
+        `;
+        
+        runEmptyCommand = `
+        set nodeBin to ""
+        try
+            set nodeBin to do shell script "which node"
+        on error
+            try
+                set nodeBin to do shell script "for p in /usr/local/bin/node /opt/homebrew/bin/node \\"$HOME/.nvm/versions/node/*/bin/node\\"; do if [ -x \\"$p\\" ]; then echo \\"$p\\"; break; fi; done"
+            end try
+        end try
+        if nodeBin is not "" then
+            do shell script (quoted form of nodeBin) & " " & (quoted form of "${launcherPath}")
+        end if
+        `;
+    }
 
-if [ -z "$NODE_BIN" ]; then
-    osascript -e 'display dialog "OfficeX cần Node.js để chạy.\\nVui lòng cài đặt Node.js từ https://nodejs.org" with title "OfficeX" buttons {"OK"} default button "OK" with icon stop'
-    exit 1
-fi
+    return `on open theFiles
+    repeat with aFile in theFiles
+        set posixPath to POSIX path of aFile
+        my runLauncher(posixPath)
+    end repeat
+end open
 
-exec "$NODE_BIN" "${launcherPath}" "$@"
+on run
+    my runLauncher("")
+end run
+
+on runLauncher(posixPath)
+    if posixPath is not "" then
+        ${runCommand}
+    else
+        ${runEmptyCommand}
+    end if
+end runLauncher
 `;
 }
 
 /**
  * Setup chính cho macOS:
- * 1. Tạo cấu trúc thư mục .app
- * 2. Ghi Info.plist + script thực thi
+ * 1. Biên dịch AppleScript applet
+ * 2. Ghi Info.plist liên kết file
  * 3. Đăng ký Launch Services
  */
 function setupMacOS(launcherPath) {
     console.log('\n[macOS] 🍏 Bắt đầu cài đặt OfficeX cho macOS...');
 
-    // Dùng ~/Applications/ để không cần sudo
     const appDir = path.join(os.homedir(), 'Applications');
     const bundlePath = path.join(appDir, `${APP_NAME}.app`);
     const contentsPath = path.join(bundlePath, 'Contents');
-    const macosPath = path.join(contentsPath, 'MacOS');
     const resourcesPath = path.join(contentsPath, 'Resources');
 
-    // 1. Tạo cấu trúc thư mục
-    console.log('[macOS] 📁 Đang tạo Application Bundle...');
-    fs.mkdirSync(macosPath, { recursive: true });
-    fs.mkdirSync(resourcesPath, { recursive: true });
+    // Xác định đường dẫn binary thực tế mà AppleScript sẽ gọi
+    let effectiveLauncherPath = launcherPath;
 
-    // Sao chép logo vào Resources
+    if (process.pkg) {
+        // Khi chạy từ pkg binary, copy binary vào bên trong .app bundle
+        // để tránh bị macOS TCC chặn quyền truy cập thư mục Downloads/Desktop
+        const internalBinaryPath = path.join(resourcesPath, 'OfficeX');
+        effectiveLauncherPath = internalBinaryPath;
+    }
+
+    // 1. Biên dịch AppleScript thành .app bundle sử dụng osacompile
+    console.log('[macOS] 📁 Đang khởi tạo Application Bundle qua osacompile...');
+    const applescriptContent = generateAppleScript(effectiveLauncherPath);
+    const tempAppleScriptFile = path.join(os.tmpdir(), `officex-${Date.now()}.applescript`);
+    fs.writeFileSync(tempAppleScriptFile, applescriptContent, 'utf8');
+
+    try {
+        if (fs.existsSync(bundlePath)) {
+            fs.rmSync(bundlePath, { recursive: true, force: true });
+        }
+        execSync(`osacompile -o "${bundlePath}" "${tempAppleScriptFile}"`);
+        console.log('[macOS] ✅ Đã biên dịch AppleScript Applet thành công');
+    } catch (e) {
+        console.error('[macOS] ❌ Lỗi khi chạy osacompile:', e.message);
+        try { fs.unlinkSync(tempAppleScriptFile); } catch (_) {}
+        throw e;
+    }
+
+    try { fs.unlinkSync(tempAppleScriptFile); } catch (_) {}
+
+    // 2. Ghi đè Info.plist tùy chỉnh
+    const plistContent = generateInfoPlist(effectiveLauncherPath);
+    fs.writeFileSync(path.join(contentsPath, 'Info.plist'), plistContent, 'utf8');
+    console.log('[macOS] ✅ Đã cập nhật Info.plist');
+
+    // 3. Copy binary + config vào bên trong .app bundle (nếu chạy từ pkg)
+    if (process.pkg) {
+        try {
+            const internalBinaryPath = path.join(resourcesPath, 'OfficeX');
+            fs.copyFileSync(process.execPath, internalBinaryPath);
+            fs.chmodSync(internalBinaryPath, 0o755);
+            console.log('[macOS] ✅ Đã nhúng binary OfficeX vào App Bundle');
+
+            // Copy config.json nếu có
+            const exeDir = path.dirname(process.execPath);
+            const configSrc = path.join(exeDir, 'config.json');
+            if (fs.existsSync(configSrc)) {
+                fs.copyFileSync(configSrc, path.join(resourcesPath, 'config.json'));
+                console.log('[macOS] ✅ Đã nhúng config.json vào App Bundle');
+            }
+        } catch (e) {
+            console.error('[macOS] ⚠️ Không thể copy binary vào App Bundle:', e.message);
+        }
+    }
+
+    // 4. Tạo file .icns từ icon.png và chèn vào Resources
     try {
         const clientPngPath = path.resolve(__dirname, '..', 'assets', 'icon.png');
         if (fs.existsSync(clientPngPath)) {
-            fs.copyFileSync(clientPngPath, path.join(resourcesPath, 'icon.png'));
-            console.log('[macOS] ✅ Đã chèn logo thương hiệu vào App Resources');
+            console.log('[macOS] 🖼 Đang tạo file icon (.icns) cho ứng dụng...');
+            const iconsetDir = path.join(os.tmpdir(), 'officex_icon.iconset');
+            if (fs.existsSync(iconsetDir)) fs.rmSync(iconsetDir, { recursive: true, force: true });
+            fs.mkdirSync(iconsetDir, { recursive: true });
+
+            const sizes = [16, 32, 64, 128, 256, 512, 1024];
+            for (const size of sizes) {
+                execSync(`sips -z ${size} ${size} "${clientPngPath}" --out "${iconsetDir}/icon_${size}x${size}.png"`);
+                if (size < 1024) {
+                    execSync(`sips -z ${size*2} ${size*2} "${clientPngPath}" --out "${iconsetDir}/icon_${size}x${size}@2x.png"`);
+                }
+            }
+
+            const icnsPath = path.join(resourcesPath, 'icon.icns');
+            execSync(`iconutil -c icns "${iconsetDir}" -o "${icnsPath}"`);
+            fs.rmSync(iconsetDir, { recursive: true, force: true });
+            console.log('[macOS] ✅ Đã chèn logo (.icns) vào App Resources');
         }
-    } catch (_) {}
+    } catch (e) {
+        console.warn('[macOS] ⚠️ Lỗi khi tạo file .icns:', e.message);
+    }
 
-    // 2. Ghi Info.plist
-    const plistContent = generateInfoPlist(launcherPath);
-    fs.writeFileSync(path.join(contentsPath, 'Info.plist'), plistContent, 'utf8');
-    console.log('[macOS] ✅ Đã tạo Info.plist');
-
-    // 3. Ghi file thực thi
-    const executablePath = path.join(macosPath, APP_NAME);
-    const scriptContent = generateExecutableScript(launcherPath);
-    fs.writeFileSync(executablePath, scriptContent, { encoding: 'utf8', mode: 0o755 });
-    console.log('[macOS] ✅ Đã tạo file thực thi');
-
-    // 4. Đăng ký Launch Services
+    // 5. Đăng ký Launch Services
     console.log('[macOS] 🔄 Đăng ký Launch Services...');
     try {
         const lsregister = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
